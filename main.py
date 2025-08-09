@@ -34,7 +34,7 @@ def betting_round(players, min_bet, starting_bet=0, start_idx=0):
     # Only reset bets if not pre-flop (so blinds are preserved)
     for i, p in enumerate(players):
         if p.chips > 0:
-            if not (starting_bet and (i == 0 or i == 1)):
+            if not starting_bet:
                 p.current_bet = 0
         else:
             p.active = False
@@ -118,13 +118,13 @@ def betting_round(players, min_bet, starting_bet=0, start_idx=0):
                     elif choice == 'b':
                         while True:
                             try:
-                                amt = int(input(f"Enter bet amount (min {min_bet}, you have {p.chips}): "))
+                                amt = int(input(f"Enter bet amount (min {current_bet + min_bet}, you have {p.chips}): "))
                             except ValueError:
                                 continue
-                            if min_bet <= amt <= p.chips:
+                            if current_bet + min_bet <= amt <= p.chips:
                                 break
                         p.chips -= amt
-                        p.current_bet += amt
+                        p.current_bet = amt
                         pot += amt
                         current_bet = amt
                         last_raiser = p
@@ -277,8 +277,8 @@ def evaluate_hand(cards):
     if pairs and len(singles) >= 5:
         return ("1 pair", max(pairs), *sorted(singles, reverse=True)[:5])
 
-    # 20. Nothing
-    return ("Nothing", *values[:7])
+    # 20. High card
+    return ("High card", *values[:7])
 
 def main():
     n = 0
