@@ -1,4 +1,4 @@
-from main import evaluate_hand, Card
+from base import evaluate_hand, Card
 
 def make_hand(card_strs):
     """Helper to create a list of Card objects from strings like 'AH', '7D', etc."""
