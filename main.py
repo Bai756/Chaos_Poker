@@ -62,6 +62,8 @@ bet_slider_min = 0
 bet_slider_max = 0
 bet_slider_preset = []
 slider_dragging = False
+dealer_position = 0
+waiting_for_action = False
 
 
 class Button:
@@ -70,6 +72,7 @@ class Button:
         self.text = text
         self.color = color
         self.action = action
+        self.visible = True
 
     def draw(self, surface):
         pygame.draw.rect(surface, self.color, self.rect, border_radius=6)
@@ -93,12 +96,18 @@ def open_bet_slider():
     bet_slider_max = max_bet
     bet_slider_value = min_bet
     bet_slider_preset = [min_bet, pot_size, max_bet]
-    update_bet_button()
+    update_buttons()
 
-def update_bet_button():
+def update_buttons():
     opponent_bet = players[1].current_bet
     player_bet = players[0].current_bet
-    buttons[0].text = "Raise" if opponent_bet > player_bet else "Bet"
+    
+    if opponent_bet > player_bet:
+        buttons[0].text = f"Call ({opponent_bet - player_bet})"
+        buttons[1].text = "Raise"
+    else:
+        buttons[0].text = "Check"
+        buttons[1].text = "Bet"
 
 def draw_info_box(x, y, player):
     pygame.draw.rect(screen, (30, 30, 30), (x, y, INFOBOX_W, INFOBOX_H), border_radius=10)
@@ -137,11 +146,9 @@ def draw_bet_slider():
     pos = SLIDER_X if bet_slider_max == bet_slider_min else int(SLIDER_X + (bet_slider_value - bet_slider_min) / (bet_slider_max - bet_slider_min) * SLIDER_W)
     pygame.draw.circle(screen, GOLD, (pos, SLIDER_Y + SLIDER_H//2), 14)
     
-    # Value
     val_txt = FONT.render(f"{bet_slider_value} chips", True, GOLD)
     screen.blit(val_txt, (WIDTH//2 - val_txt.get_width()//2, 440))
     
-    # Preset buttons
     preset_labels = ["Min", "Pot", "All In"]
     for i, val in enumerate(bet_slider_preset):
         bx = 300 + i*130
@@ -149,7 +156,6 @@ def draw_bet_slider():
         label = FONT.render(f"{preset_labels[i]} ({val})", True, BLACK)
         screen.blit(label, (bx + PRESET_BW//2 - label.get_width()//2, PRESET_BY + PRESET_BH//2 - label.get_height()//2))
     
-    # Confirm/cancel
     pygame.draw.rect(screen, GOLD, OK_BTN_RECT, border_radius=8)
     ok_txt = FONT.render("OK", True, BLACK)
     screen.blit(ok_txt, (OK_BTN_RECT.centerx - ok_txt.get_width()//2, OK_BTN_RECT.centery - ok_txt.get_height()//2))
@@ -158,33 +164,33 @@ def draw_bet_slider():
     screen.blit(cancel_txt, (CANCEL_BTN_RECT.centerx - cancel_txt.get_width()//2, CANCEL_BTN_RECT.centery - cancel_txt.get_height()//2))
 
 def handle_bet_slider_event(mx, my):
-    global bet_slider_value
-    # Slider bar
+    global bet_slider_value, waiting_for_action
     if SLIDER_Y <= my <= SLIDER_Y + SLIDER_H and SLIDER_X <= mx <= SLIDER_X + SLIDER_W:
         rel = (mx - SLIDER_X) / SLIDER_W
         bet_slider_value = int(bet_slider_min + rel * (bet_slider_max - bet_slider_min))
     
     # Preset buttons
     for i, val in enumerate(bet_slider_preset):
-        bx = 320 + i*110
+        bx = 300 + i*130 
         if bx <= mx <= bx+PRESET_BW and PRESET_BY <= my <= PRESET_BY+PRESET_BH:
             bet_slider_value = val
     
-    # OK button
     if OK_BTN_RECT.collidepoint(mx, my):
         bet_action(bet_slider_value)
         close_bet_slider()
+        return True
     
-    # Cancel button
     if CANCEL_BTN_RECT.collidepoint(mx, my):
         close_bet_slider()
+
+    return False
 
 def new_deck():
     global deck
     deck = Deck()
 
 def start_new_game():
-    global players, community_cards, pot, round_stage, message, winner
+    global players, community_cards, pot, round_stage, message, winner, dealer_position
     new_deck()
     players = [Player("Player"), Player("Opponent")]
     pot = 0
@@ -192,11 +198,25 @@ def start_new_game():
     winner = None
     message = "New hand!"
     
-    # Blinds
-    players[0].chips -= 5
-    players[0].current_bet = 5
-    players[1].chips -= 10
-    players[1].current_bet = 10
+    dealer_position = (dealer_position + 1) % 2
+    
+    # Set blinds based on dealer position
+    if dealer_position == 0:
+        players[0].chips -= 5
+        players[0].current_bet = 5
+        players[1].chips -= 10
+        players[1].current_bet = 10
+        message = "You are dealer (small blind)"
+    else:
+        players[1].chips -= 5
+        players[1].current_bet = 5
+        players[0].chips -= 10
+        players[0].current_bet = 10
+        message = "Opponent is dealer (small blind)"
+        
+    players[0].acted = False
+    players[1].acted = False
+    
     pot += 15
     
     # Deal
@@ -204,14 +224,14 @@ def start_new_game():
         p.hand = deck.deal(2)
         p.active = True
     community_cards.clear()
-    update_bet_button()
+    update_buttons()
 
 def deal_community(n):
     global community_cards
     community_cards.extend(deck.deal(n))
 
 def bet_action(amount):
-    global pot, message
+    global pot, message, waiting_for_action
     player = players[0]
     if winner or player.chips < amount:
         return
@@ -219,18 +239,49 @@ def bet_action(amount):
     player.current_bet += amount
     pot += amount
     message = f"You bet {amount} chips."
-    update_bet_button()
+    
+    player.acted = True
+    
+    players[1].acted = False
+    
+    update_buttons()
+    waiting_for_action = False
+
+def check_action():
+    global message, pot
+    opponent_bet = players[1].current_bet
+    player_bet = players[0].current_bet
+    
+    if opponent_bet > player_bet:
+        to_call = opponent_bet - player_bet
+        call_amt = min(to_call, players[0].chips)
+        players[0].chips -= call_amt
+        players[0].current_bet += call_amt
+        pot += call_amt
+        message = f"You called {call_amt}."
+    else:
+        message = "You checked."
+    
+    players[0].acted = True
+    update_buttons()
 
 def fold_action():
-    global message, winner
+    global message, winner, round_stage
     players[0].active = False
+    players[0].acted = True
     winner = "Opponent"
     message = "You folded."
+    round_stage = "showdown"
+    players[1].chips += pot
 
 def advance_round():
     global round_stage, message, winner
     if winner:
         return
+        
+    for p in players:
+        p.acted = False
+        
     if round_stage == "preflop":
         deal_community(3)
         round_stage = "flop"
@@ -248,12 +299,12 @@ def advance_round():
         determine_winner()
     else:
         start_new_game()
-    update_bet_button()
+    update_buttons()
 
 def make_buttons():
     return [
-        Button("Bet", BTN_X, BTN_Y_START, BTN_W, BTN_H, GRAY, open_bet_slider),
-        Button("Next Round", BTN_X, BTN_Y_START + BTN_SPACING, BTN_W, BTN_H, GRAY, advance_round),
+        Button("Check", BTN_X, BTN_Y_START, BTN_W, BTN_H, GRAY, check_action),  # Check/Call button now first
+        Button("Bet", BTN_X, BTN_Y_START + BTN_SPACING, BTN_W, BTN_H, GRAY, open_bet_slider),  # Bet/Raise button second
         Button("Fold", BTN_X, BTN_Y_START + 2*BTN_SPACING, BTN_W, BTN_H, RED, fold_action),
         Button("New Game", BTN_X, BTN_Y_START + 3*BTN_SPACING, BTN_W, BTN_H, GRAY, start_new_game)
     ]
@@ -285,24 +336,20 @@ def close_bet_slider():
 def draw():
     screen.fill(GREEN)
     pygame.draw.ellipse(screen, (0, 100, 0), (80, 120, WIDTH-160, HEIGHT-240))
-    # Pot
+
     pot_text = BIG_FONT.render(f"Pot: {pot}", True, GOLD)
     screen.blit(pot_text, (50, 110))
-    # Community cards
+
     draw_hand(community_cards, 260, 180)
-    
-    # Player info boxes
     draw_info_box(INFOBOX_PLAYER_X, INFOBOX_PLAYER_Y, players[0])
     draw_info_box(INFOBOX_OPP_X, INFOBOX_OPP_Y, players[1])
-    # Player cards
+
     highlight = (winner == "Player" and round_stage == "showdown")
     draw_hand(players[0].hand, 400, 500, highlight)
-    # Opponent cards
     highlight = (winner == "Opponent" and round_stage == "showdown")
     hide = round_stage != "showdown"
     draw_hand(players[1].hand, 400, 30, highlight, hide)
-    
-    # Winner message
+
     if round_stage == "showdown":
         msg_bg = pygame.Surface((WIDTH, 80), pygame.SRCALPHA)
         msg_bg.fill((0, 0, 0, 180))
@@ -312,41 +359,208 @@ def draw():
     else:
         msg_text = FONT.render(message, True, WHITE)
         screen.blit(msg_text, (50, 140))
+
+    # Show/hide buttons
+    opponent_bet = players[1].current_bet
+    player_bet = players[0].current_bet
     
-    # Buttons
+    if round_stage != "showdown" and players[0].active and players[1].active:
+        buttons[0].visible = True
+        buttons[1].visible = True
+        
+        if opponent_bet > player_bet:
+            buttons[0].text = f"Call ({opponent_bet - player_bet})"
+            buttons[1].text = "Raise"
+        else:
+            buttons[0].text = "Check"
+            buttons[1].text = "Bet"
+        
+        buttons[2].visible = True
+    else:
+        buttons[0].visible = False
+        buttons[1].visible = False
+        buttons[2].visible = False
+    
+    buttons[3].visible = True
+    
     for b in buttons:
-        b.draw(screen)
-    # Bet slider
+        if getattr(b, "visible", True):
+            b.draw(screen)
+            
     if show_bet_slider:
         draw_bet_slider()
+        
     pygame.display.flip()
 
-start_new_game()
-running = True
-while running:
-    for event in pygame.event.get():
-        if event.type == pygame.QUIT:
-            pygame.quit()
-            sys.exit()
-        elif event.type == pygame.MOUSEBUTTONDOWN:
-            if show_bet_slider:
-                mx, my = event.pos
-                # Check if clicking the slider handle
-                if (300 <= mx <= 600) and (SLIDER_Y-10 <= my <= SLIDER_Y+SLIDER_H+10):
-                    slider_dragging = True
-                else:
-                    handle_bet_slider_event(mx, my)
+def opponent_action():
+    global waiting_for_action, pot, message
+    opp = players[1]
+    player = players[0]
+    to_call = player.current_bet - opp.current_bet
+    print(f"\n--- Opponent's turn ---")
+    print(f"Your bet: {player.current_bet}, Opponent bet: {opp.current_bet}, To call: {to_call}")
+    print(f"Opponent chips: {opp.chips}")
+    print("Options: [call] [raise <amount>] [fold]")
+
+    while True:
+        cmd = input("Opponent action: ").strip().lower()
+        if cmd == "call":
+            call_amt = min(to_call, opp.chips)
+            opp.chips -= call_amt
+            opp.current_bet += call_amt
+            pot += call_amt
+            print(f"Opponent calls {call_amt}")
+            opp.acted = True
+            message = f"Opponent calls {call_amt}"
+            break
+        elif cmd.startswith("raise"):
+            try:
+                amt = int(cmd.split()[1])
+            except Exception:
+                print("Usage: raise <amount>")
+                continue
+            min_raise = to_call + 10
+            if amt < min_raise or amt > opp.chips:
+                print(f"Raise must be at least {min_raise} and at most {opp.chips}")
+                continue
+            opp.chips -= amt - opp.current_bet
+            pot += amt - opp.current_bet
+            opp.current_bet = amt
+
+            players[0].acted = False
+            opp.acted = True
+            
+            message = f"Opponent raises to {opp.current_bet}"
+            print(message)
+            break
+        elif cmd == "fold":
+            opp.active = False
+            opp.acted = True
+            message = "Opponent folds"
+            print(message)
+            break
+        else:
+            print("Invalid command.")
+    
+    update_buttons()
+    waiting_for_action = True
+
+def get_action_order():
+    if round_stage == "preflop":
+        return [players[0], players[1]] if dealer_position == 0 else [players[1], players[0]]
+    else:
+        return [players[1], players[0]] if dealer_position == 0 else [players[0], players[1]]
+
+def game_loop():
+    global slider_dragging, bet_slider_value
+    
+    while not winner and round_stage != "showdown":
+        action_order = get_action_order()
+        
+        # First player to act
+        first_player = action_order[0]
+        if not first_player.acted:
+            if first_player == players[0]:
+                handle_player_action()
             else:
-                for b in buttons:
-                    if b.rect.collidepoint(event.pos):
-                        b.click()
-        elif event.type == pygame.MOUSEBUTTONUP:
-            slider_dragging = False
-        elif event.type == pygame.MOUSEMOTION:
-            if show_bet_slider and slider_dragging:
-                mx, my = event.pos
-                # Clamp mouse x to slider bar
-                mx = max(SLIDER_X, min(mx, SLIDER_X + SLIDER_W))
-                rel = (mx - SLIDER_X) / SLIDER_W
-                bet_slider_value = int(bet_slider_min + rel * (bet_slider_max - bet_slider_min))
-    draw()
+                opponent_action()
+            update_buttons()
+            draw()
+        
+        if check_round_over():
+            advance_round()
+            draw()
+            continue
+            
+        if winner or round_stage == "showdown" or not (players[0].active and players[1].active):
+            continue
+        
+        # Second player to act
+        second_player = action_order[1]
+        if not second_player.acted:
+            if second_player == players[0]:
+                handle_player_action()
+            else:
+                opponent_action()
+            update_buttons()
+            draw()
+        
+        if check_round_over():
+            advance_round()
+            draw()
+            
+        if not players[0].active or not players[1].active:
+            determine_winner()
+            draw()
+
+def check_round_over():
+    active_players = [p for p in players if p.active]
+    
+    all_acted = all(p.acted for p in active_players)
+    
+    bets_match = len(set(p.current_bet for p in active_players)) <= 1
+    
+    return all_acted and bets_match
+
+def handle_player_action():
+    global slider_dragging, bet_slider_value, waiting_for_action
+    waiting_for_action = True
+    
+    if players[0].acted:
+        waiting_for_action = False
+        return
+        
+    while waiting_for_action:
+        draw()
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                if show_bet_slider:
+                    mx, my = event.pos
+                    handle_bet_slider_mouse_down(mx, my)
+                else:
+                    for b in buttons:
+                        if getattr(b, "visible", True) and b.rect.collidepoint(event.pos):
+                            b.click()
+                            if b.text in ["Check", "Fold"] or b.text.startswith("Call ("):
+                                waiting_for_action = False
+            elif event.type == pygame.MOUSEBUTTONUP:
+                slider_dragging = False
+            elif event.type == pygame.MOUSEMOTION:
+                if show_bet_slider and slider_dragging:
+                    mx, my = event.pos
+                    mx = max(SLIDER_X, min(mx, SLIDER_X + SLIDER_W))
+                    rel = (mx - SLIDER_X) / SLIDER_W
+                    bet_slider_value = int(bet_slider_min + rel * (bet_slider_max - bet_slider_min))
+        pygame.time.wait(10)
+
+def handle_bet_slider_mouse_down(mx, my):
+    global slider_dragging, bet_slider_value, waiting_for_action
+    # Check if clicking the slider handle
+    pos = SLIDER_X if bet_slider_max == bet_slider_min else int(SLIDER_X + (bet_slider_value - bet_slider_min) / (bet_slider_max - bet_slider_min) * SLIDER_W)
+    if abs(mx - pos) <= 18 and abs(my - (SLIDER_Y + SLIDER_H//2)) <= 18:
+        slider_dragging = True
+    else:
+        if handle_bet_slider_event(mx, my):
+            waiting_for_action = False
+
+
+if __name__ == "__main__":
+    start_new_game()
+    while True:
+        game_loop()
+    
+        while round_stage == "showdown":
+            draw()
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.quit()
+                    sys.exit()
+                elif event.type == pygame.MOUSEBUTTONDOWN:
+                    for b in buttons:
+                        if getattr(b, "visible", True) and b.rect.collidepoint(event.pos):
+                            b.click()
+            pygame.time.wait(10)
+
