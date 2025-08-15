@@ -563,4 +563,3 @@ if __name__ == "__main__":
                         if getattr(b, "visible", True) and b.rect.collidepoint(event.pos):
                             b.click()
             pygame.time.wait(10)
-
