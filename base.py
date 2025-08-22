@@ -51,6 +51,7 @@ class Player:
         self.active = True
         self.current_bet = 0
         self.acted = False
+        self.all_in = False
 
 def betting_round(players, min_bet, starting_bet=0, start_idx=0):
     pot = 0

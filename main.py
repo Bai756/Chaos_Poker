@@ -4,11 +4,16 @@ import pickle
 from base import evaluate_hand, Deck, hand_name_from_rank, Player
 from crf import mc_win_prob, new_deck as crf_new_deck, board_texture, draws_flags
 
+# TODO:
+# Fix sometimes all in not advancing to showdown (has to do with player not acting)
+# Make it so all in you can only win as much as you put in
+
+
 BTN_X = 750
 BTN_W = 130
 BTN_H = 40
 BTN_SPACING = 70
-BTN_Y_START = 130
+BTN_Y_START = 180
 
 INFOBOX_W = 220
 INFOBOX_H = 60
@@ -94,7 +99,6 @@ class Button:
 
     def click(self):
         self.action()
-
 
 def open_bet_slider():
     global show_bet_slider, bet_slider_min, bet_slider_max, bet_slider_value, bet_slider_preset
@@ -204,37 +208,53 @@ def new_deck():
 def start_new_game():
     global players, community_cards, pot, round_stage, message, winner, dealer_position
     new_deck()
-    players = [Player("Player"), Player("Opponent")]
+    
+    # Check if this is a completely new game or a new hand
+    if not players:
+        players = [Player("Player"), Player("Opponent")]
+    else:
+        # Check for busted players and give them 500 chips if needed
+        for p in players:
+            if p.chips <= 0:
+                p.chips = 500
+                message = f"{p.name} rebought for 500 chips"
+        
+        # Reset player state for new hand but keep chips
+        for p in players:
+            p.active = True
+            p.acted = False
+            p.current_bet = 0
+            p.hand = []
+            p.all_in = False 
+    
     pot = 0
     round_stage = "preflop"
     winner = None
-    message = "New hand!"
     
     dealer_position = (dealer_position + 1) % 2
     
     # Set blinds based on dealer position
     if dealer_position == 0:
-        players[0].chips -= 5
-        players[0].current_bet = 5
-        players[1].chips -= 10
-        players[1].current_bet = 10
+        # Make sure players can afford the blinds
+        players[0].chips -= min(5, players[0].chips)
+        players[0].current_bet = min(5, players[0].chips)
+        players[1].chips -= min(10, players[1].chips)
+        players[1].current_bet = min(10, players[1].chips)
         message = "You are dealer (small blind)"
     else:
-        players[1].chips -= 5
-        players[1].current_bet = 5
-        players[0].chips -= 10
-        players[0].current_bet = 10
+        players[1].chips -= min(5, players[1].chips)
+        players[1].current_bet = min(5, players[1].chips)
+        players[0].chips -= min(10, players[0].chips)
+        players[0].current_bet = min(10, players[0].chips)
         message = "Opponent is dealer (small blind)"
-        
-    players[0].acted = False
-    players[1].acted = False
     
-    pot += 15
+    # Calculate actual pot (in case of all-in on blinds)
+    pot = players[0].current_bet + players[1].current_bet
     
     # Deal
     for p in players:
         p.hand = deck.deal(2)
-        p.active = True
+        
     community_cards.clear()
     update_buttons()
     draw()
@@ -248,13 +268,14 @@ def bet_action(amount):
     player = players[0]
     if winner or player.chips < amount:
         return
+    
+    if amount == player.chips:
+        player.all_in = True
+        
     player.chips -= amount
     player.current_bet += amount
     pot += amount
-    message = f"You bet {amount} chips."
-    
     player.acted = True
-    
     players[1].acted = False
     
     update_buttons()
@@ -268,16 +289,13 @@ def check_action():
     if opponent_bet > player_bet:
         to_call = opponent_bet - player_bet
         call_amt = min(to_call, players[0].chips)
+        
+        if call_amt == players[0].chips:
+            players[0].all_in = True
+            
         players[0].chips -= call_amt
         players[0].current_bet += call_amt
         pot += call_amt
-        
-        if call_amt < to_call:
-            message = f"You call all-in with {call_amt}"
-        else:
-            message = f"You called {call_amt}."
-    else:
-        message = "You checked."
     
     players[0].acted = True
     update_buttons()
@@ -304,15 +322,12 @@ def advance_round():
     if round_stage == "preflop":
         deal_community(3)
         round_stage = "flop"
-        message = "Flop dealt."
     elif round_stage == "flop":
         deal_community(1)
         round_stage = "turn"
-        message = "Turn dealt."
     elif round_stage == "turn":
         deal_community(1)
         round_stage = "river"
-        message = "River dealt."
     elif round_stage == "river":
         round_stage = "showdown"
         determine_winner()
@@ -322,10 +337,10 @@ def advance_round():
 
 def make_buttons():
     return [
-        Button("Check", BTN_X, BTN_Y_START, BTN_W, BTN_H, GRAY, check_action),  # Check/Call button now first
-        Button("Bet", BTN_X, BTN_Y_START + BTN_SPACING, BTN_W, BTN_H, GRAY, open_bet_slider),  # Bet/Raise button second
+        Button("Check", BTN_X, BTN_Y_START, BTN_W, BTN_H, GRAY, check_action),
+        Button("Bet", BTN_X, BTN_Y_START + BTN_SPACING, BTN_W, BTN_H, GRAY, open_bet_slider),
         Button("Fold", BTN_X, BTN_Y_START + 2*BTN_SPACING, BTN_W, BTN_H, RED, fold_action),
-        Button("New Game", BTN_X, BTN_Y_START + 3*BTN_SPACING, BTN_W, BTN_H, GRAY, start_new_game)
+        Button("Next Hand", WIDTH//2 - 75, HEIGHT//2 + 50, 150, 40, GOLD, start_new_game)
     ]
 
 buttons = make_buttons()
@@ -385,9 +400,11 @@ def draw():
         screen.blit(msg_bg, (0, HEIGHT // 2 - 40))
         msg_text = BIG_FONT.render(message, True, GOLD)
         screen.blit(msg_text, (WIDTH // 2 - msg_text.get_width() // 2, HEIGHT // 2 - msg_text.get_height() // 2))
+        buttons[3].visible = True
     else:
         msg_text = FONT.render(message, True, WHITE)
         screen.blit(msg_text, (50, 140))
+        buttons[3].visible = False
 
     # Show/hide buttons
     opponent_bet = players[1].current_bet
@@ -410,15 +427,13 @@ def draw():
         buttons[1].visible = False
         buttons[2].visible = False
     
-    buttons[3].visible = True
-    
     for b in buttons:
         if getattr(b, "visible", True):
             b.draw(screen)
             
     if show_bet_slider:
         draw_bet_slider()
-        
+
     pygame.display.flip()
 
 def opponent_action():
@@ -433,7 +448,7 @@ def opponent_action():
     
     if not crf_model:
         raise Exception("CRF model not loaded. Cannot make AI decision.")
-    if opp.chips <= 0:
+    if opp.all_in:
         opp.acted = True
         waiting_for_action = True
         return
@@ -483,22 +498,23 @@ def opponent_action():
         winner = "Player"
         players[0].chips += pot
         round_stage = "showdown"
+
+    elif action == "CHECK" and to_call == 0:
+        message = "AI opponent checks"
+        opp.acted = True
     
-    elif action == "CHECK":
-        if to_call > 0:
-            action = "CALL"
-        else:
-            message = "AI opponent checks"
-            opp.acted = True
-    
-    elif action == "CALL":
+    elif action == "CALL" or action == "CHECK":
         call_amt = min(to_call, opp.chips)
+        
+        if call_amt == opp.chips:
+            opp.all_in = True
+            
         opp.chips -= call_amt
         opp.current_bet += call_amt
         pot += call_amt
         opp.acted = True
         
-        if call_amt < to_call:
+        if opp.all_in:
             message = f"AI opponent calls all-in with {call_amt}"
         else:
             message = f"AI opponent calls {call_amt}"
@@ -510,13 +526,12 @@ def opponent_action():
         half_pot = max(10, int(pot * 0.5))
         three_quarter_pot = max(10, int(pot * 0.75))
         pot_bet = max(10, pot)
-        allin = opp.chips
         
         # Check if AI can't afford the minimum raise/bet
         if to_call > 0 and opp.chips <= to_call:
             # AI can't even call, so go all-in
-            action = "CALL"
             call_amt = opp.chips
+            opp.all_in = True
             opp.chips = 0
             pot += call_amt
             opp.current_bet += call_amt
@@ -524,8 +539,7 @@ def opponent_action():
             message = f"AI opponent calls all-in with {call_amt}"
         elif to_call == 0 and opp.chips < 10:
             # AI can't afford minimum bet, so check
-            action = "CHECK"
-            message = "AI opponent checks (not enough chips to bet)"
+            message = "AI opponent checks"
             opp.acted = True
         else:
             # Choose bet size based on action
@@ -539,7 +553,7 @@ def opponent_action():
                 bet_amount = min(three_quarter_pot, opp.chips, player.chips + player.current_bet)
             elif action == "BET_POT":
                 bet_amount = min(pot_bet, opp.chips, player.chips + player.current_bet)
-            else:  # ALLIN
+            else:
                 bet_amount = opp.chips
                 
             if to_call > 0:  # Raising
@@ -558,38 +572,52 @@ def opponent_action():
                     opp.chips -= call_amt
                     pot += call_amt
                     opp.current_bet += call_amt
-                    message = f"AI opponent calls {call_amt} (not enough to raise)"
+                    message = f"AI opponent calls {call_amt}"
+                elif bet_amount < player.current_bet:
+                    # Bet is smaller than min raise
+                    call_amt = to_call
+                    opp.chips -= call_amt
+                    pot += call_amt
+                    opp.current_bet += call_amt
+                    message = f"AI opponent calls {call_amt}"
                 else:
-                    # Can raise
-                    actual_raise = min(bet_amount, opp.current_bet + opp.chips)
-                    
-                    additional_chips = actual_raise - opp.current_bet
-                    
-                    opp.chips -= additional_chips
-                    pot += additional_chips
-                    opp.current_bet = actual_raise
-                    
-                    if additional_chips == opp.chips:
-                        message = f"AI opponent raises all-in to {actual_raise}"
+                    if bet_amount >= opp.chips + opp.current_bet:
+                        # All-in raise
+                        additional_chips = opp.chips
+                        opp.current_bet += additional_chips
+                        pot += additional_chips
+                        opp.chips = 0
+                        opp.all_in = True
+                        message = f"AI opponent raises all-in to {opp.current_bet}"
                     else:
-                        message = f"AI opponent raises to {actual_raise}"
-            else: # Betting
-                bet_amount = min(bet_amount, opp.chips)
-                
-                opp.chips -= bet_amount
-                pot += bet_amount
-                opp.current_bet = bet_amount
-                
-                if bet_amount == opp.chips:
+                        # Normal raise
+                        additional_chips = bet_amount - opp.current_bet
+                        opp.chips -= additional_chips
+                        pot += additional_chips
+                        opp.current_bet = bet_amount
+                        message = f"AI opponent raises to {bet_amount}"
+            else:  # Betting
+                if bet_amount < min_bet and bet_amount < opp.chips:
+                    # If less than min bet and AI can afford min bet, force min bet
+                    bet_amount = min_bet
+                    
+                if bet_amount >= opp.chips:
+                    bet_amount = opp.chips
+                    opp.all_in = True
                     message = f"AI opponent bets all-in ({bet_amount})"
                 else:
                     message = f"AI opponent bets {bet_amount}"
-                
+                    
+                opp.chips -= bet_amount
+                pot += bet_amount
+                opp.current_bet = bet_amount
+            
         opp.acted = True
         
         # Mark player as not acted since they need to respond to a raise/bet
-        if bet_amount > player.current_bet and player.chips > 0:
-            players[0].acted = False
+        if to_call == 0 or bet_amount > player.current_bet:
+            if player.chips > 0:
+                players[0].acted = False
     
     update_buttons()
     waiting_for_action = True
@@ -603,11 +631,12 @@ def get_action_order():
 def game_loop():
     global slider_dragging, bet_slider_value, winner, round_stage
     
-    if all(p.acted for p in players if p.active) and any(p.chips == 0 for p in players if p.active):
-        # Deal remaining cards
-        while round_stage not in ["showdown"]:
-            advance_round()
-            draw()
+    if any(p.all_in for p in players if p.active):
+        if all(p.acted or p.all_in for p in players if p.active):
+            while round_stage not in ["showdown"]:
+                advance_round()
+                draw()
+            return
     
     while not winner and round_stage != "showdown":
         action_order = get_action_order()
@@ -621,15 +650,13 @@ def game_loop():
                 opponent_action()
             update_buttons()
             draw()
-        
-        # Check for all-in situation
-        if any(p.chips == 0 and p.active for p in players):
-            # If someone is all-in and everyone has acted, run out the remaining cards
-            if all(p.acted for p in players if p.active):
-                while round_stage not in ["showdown"]:
-                    advance_round()
-                    draw()
-                break
+            
+            if any(p.all_in for p in players if p.active):
+                if all(p.acted or p.all_in for p in players if p.active):
+                    while round_stage not in ["showdown"]:
+                        advance_round()
+                        draw()
+                    return
         
         if check_round_over():
             advance_round()
@@ -648,6 +675,13 @@ def game_loop():
                 opponent_action()
             update_buttons()
             draw()
+            
+            if any(p.all_in for p in players if p.active):
+                if all(p.acted or p.all_in for p in players if p.active):
+                    while round_stage not in ["showdown"]:
+                        advance_round()
+                        draw()
+                    return
         
         if check_round_over():
             advance_round()
@@ -664,14 +698,22 @@ def check_round_over():
     if len(active_players) <= 1:
         return True
     
+    all_decided = all(p.acted or p.all_in for p in active_players)
+    
+    if any(p.all_in for p in active_players) and all_decided:
+        return True
+    
     all_acted = all(p.acted for p in active_players)
     
-    if any(p.chips <= 0 for p in active_players):
-        return all_acted
+    bets_equal_or_all_in = True
+    max_bet = max(p.current_bet for p in active_players)
     
-    bets_match = len(set(p.current_bet for p in active_players)) <= 1
+    for p in active_players:
+        if p.current_bet < max_bet and not p.all_in:
+            bets_equal_or_all_in = False
+            break
     
-    return all_acted and bets_match
+    return all_acted and bets_equal_or_all_in
 
 def handle_player_action():
     global slider_dragging, bet_slider_value, waiting_for_action
@@ -720,17 +762,22 @@ def handle_bet_slider_mouse_down(mx, my):
 
 if __name__ == "__main__":
     start_new_game()
-    while True:
-        game_loop()
     
-        while round_stage == "showdown":
+    running = True
+    while running:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                for b in buttons:
+                    if getattr(b, "visible", True) and b.rect.collidepoint(event.pos):
+                        b.click()
+        
+        if round_stage != "showdown":
+            game_loop()
+        else:
             draw()
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    pygame.quit()
-                    sys.exit()
-                elif event.type == pygame.MOUSEBUTTONDOWN:
-                    for b in buttons:
-                        if getattr(b, "visible", True) and b.rect.collidepoint(event.pos):
-                            b.click()
-            pygame.time.wait(10)
+        
+        pygame.time.wait(10)
+    
+    pygame.quit()
