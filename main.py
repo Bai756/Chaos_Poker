@@ -56,7 +56,6 @@ players = []
 community_cards = []
 deck = None
 pot = 0
-main_pot = 0
 round_stage = "preflop"
 message = "Welcome to Hold'em!"
 winner = None
@@ -104,7 +103,7 @@ def open_bet_slider():
     player_bet = players[0].current_bet
     min_bet = opponent_bet - player_bet + 10 if opponent_bet > player_bet else 10
     max_bet = players[0].chips
-    pot_size = min(pot, players[0].chips)
+    pot_size = min(pot, max_bet)
     show_bet_slider = True
     bet_slider_min = min_bet
     bet_slider_max = max_bet
@@ -204,7 +203,7 @@ def new_deck():
     deck = Deck()
 
 def start_new_game():
-    global players, community_cards, pot, round_stage, message, winner, dealer_position, player_contributions, main_pot
+    global players, community_cards, pot, round_stage, message, winner, dealer_position, player_contributions
     new_deck()
     
     player_contributions = [0, 0]
@@ -228,7 +227,6 @@ def start_new_game():
             p.all_in = False 
     
     pot = 0
-    main_pot = 0
     round_stage = "preflop"
     winner = None
     
@@ -395,7 +393,7 @@ def determine_winner():
             winner = "Tie"
             split = main_pot // 2
             players[0].chips += split
-            players[1].chips += main_pot - split
+            players[1].chips += split
             
             if player_contributions[0] > player_contributions[1]:
                 players[0].chips += side_pot
@@ -404,7 +402,19 @@ def determine_winner():
         
         message = f"Winner: {winner} ({player_name} vs {opponent_name})"
         return
-        
+
+    if player_best > opponent_best:
+        winner = "Player"
+        players[0].chips += pot
+    elif player_best < opponent_best:
+        winner = "Opponent"
+        players[1].chips += pot
+    else:  # Tie
+        winner = "Tie"
+        split = pot // 2
+        players[0].chips += split
+        players[1].chips += split
+
     message = f"Winner: {winner} ({player_name} vs {opponent_name})"
 
 def close_bet_slider():
@@ -531,7 +541,6 @@ def opponent_action():
         opp.acted = True
         message = "AI opponent folds"
         winner = "Player"
-        players[0].chips += pot
         round_stage = "showdown"
 
     elif action == "CHECK" and to_call == 0:
