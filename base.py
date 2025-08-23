@@ -207,8 +207,15 @@ def evaluate_hand(cards):
             window = vals[i:i+length]
             if window[0] - window[-1] == length - 1:
                 return window[0]
+
+        # Check for wheel straights (Ace as low)
         if length == 5 and set([14, 5, 4, 3, 2]).issubset(vals):
             return 5
+        elif length == 6 and set([14, 6, 5, 4, 3, 2]).issubset(vals):
+            return 6
+        elif length == 7 and set([14, 7, 6, 5, 4, 3, 2]).issubset(vals):
+            return 7
+
         return None
 
     quads = [v for v, c in counts.items() if c == 4]

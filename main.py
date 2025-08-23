@@ -4,10 +4,6 @@ import pickle
 from base import evaluate_hand, Deck, hand_name_from_rank, Player
 from crf import mc_win_prob, new_deck as crf_new_deck, board_texture, draws_flags
 
-# TODO:
-# Fix sometimes all in not advancing to showdown (has to do with player not acting)
-# Make it so all in you can only win as much as you put in
-
 
 BTN_X = 750
 BTN_W = 130
@@ -60,6 +56,7 @@ players = []
 community_cards = []
 deck = None
 pot = 0
+main_pot = 0
 round_stage = "preflop"
 message = "Welcome to Hold'em!"
 winner = None
@@ -71,6 +68,7 @@ bet_slider_preset = []
 slider_dragging = False
 dealer_position = 0
 waiting_for_action = False
+player_contributions = [0, 0]
 
 try:
     with open("crfv3.pkl", "rb") as f:
@@ -106,7 +104,7 @@ def open_bet_slider():
     player_bet = players[0].current_bet
     min_bet = opponent_bet - player_bet + 10 if opponent_bet > player_bet else 10
     max_bet = players[0].chips
-    pot_size = pot
+    pot_size = min(pot, players[0].chips)
     show_bet_slider = True
     bet_slider_min = min_bet
     bet_slider_max = max_bet
@@ -206,8 +204,10 @@ def new_deck():
     deck = Deck()
 
 def start_new_game():
-    global players, community_cards, pot, round_stage, message, winner, dealer_position
+    global players, community_cards, pot, round_stage, message, winner, dealer_position, player_contributions, main_pot
     new_deck()
+    
+    player_contributions = [0, 0]
     
     # Check if this is a completely new game or a new hand
     if not players:
@@ -228,6 +228,7 @@ def start_new_game():
             p.all_in = False 
     
     pot = 0
+    main_pot = 0
     round_stage = "preflop"
     winner = None
     
@@ -241,15 +242,17 @@ def start_new_game():
         players[1].chips -= min(10, players[1].chips)
         players[1].current_bet = min(10, players[1].chips)
         message = "You are dealer (small blind)"
+        player_contributions = [min(5, players[0].chips), min(10, players[1].chips)]
     else:
         players[1].chips -= min(5, players[1].chips)
         players[1].current_bet = min(5, players[1].chips)
         players[0].chips -= min(10, players[0].chips)
         players[0].current_bet = min(10, players[0].chips)
         message = "Opponent is dealer (small blind)"
-    
-    # Calculate actual pot (in case of all-in on blinds)
-    pot = players[0].current_bet + players[1].current_bet
+        player_contributions = [min(10, players[0].chips), min(5, players[1].chips)]
+
+    # Calculate pot
+    pot = player_contributions[0] + player_contributions[1]
     
     # Deal
     for p in players:
@@ -264,7 +267,7 @@ def deal_community(n):
     community_cards.extend(deck.deal(n))
 
 def bet_action(amount):
-    global pot, message, waiting_for_action
+    global pot, message, waiting_for_action, player_contributions
     player = players[0]
     if winner or player.chips < amount:
         return
@@ -275,6 +278,7 @@ def bet_action(amount):
     player.chips -= amount
     player.current_bet += amount
     pot += amount
+    player_contributions[0] += amount
     player.acted = True
     players[1].acted = False
     
@@ -282,7 +286,7 @@ def bet_action(amount):
     waiting_for_action = False
 
 def check_action():
-    global message, pot, waiting_for_action, round_stage
+    global message, pot, waiting_for_action, player_contributions
     opponent_bet = players[1].current_bet
     player_bet = players[0].current_bet
     
@@ -296,6 +300,7 @@ def check_action():
         players[0].chips -= call_amt
         players[0].current_bet += call_amt
         pot += call_amt
+        player_contributions[0] += call_amt
     
     players[0].acted = True
     update_buttons()
@@ -346,7 +351,7 @@ def make_buttons():
 buttons = make_buttons()
 
 def determine_winner():
-    global winner, message
+    global winner, message, pot
     player_best = evaluate_hand(players[0].hand + community_cards)
     opponent_best = evaluate_hand(players[1].hand + community_cards)
     player_name = hand_name_from_rank(player_best[0])
@@ -355,21 +360,50 @@ def determine_winner():
     if not players[0].active:
         winner = "Opponent"
         players[1].chips += pot
+        message = f"Winner: {winner} (Player folded)"
+        return
     elif not players[1].active:
         winner = "Player"
         players[0].chips += pot
-    elif player_best > opponent_best:
-        winner = "Player"
-        players[0].chips += pot
-    elif player_best < opponent_best:
-        winner = "Opponent"
-        players[1].chips += pot
-    else:
-        winner = "Tie"
-        # Split pot
-        split = pot // 2
-        players[0].chips += split
-        players[1].chips += pot - split
+        message = f"Winner: {winner} (Opponent folded)"
+        return
+    
+    # Handle side pots when someone is all-in
+    if players[0].all_in or players[1].all_in:
+        min_contrib = min(player_contributions[0], player_contributions[1])
+        main_pot = min_contrib * 2
+        
+        side_pot = pot - main_pot
+        
+        if player_best > opponent_best:
+            winner = "Player"
+            players[0].chips += main_pot
+            # If player contributed more, they also get side pot
+            if player_contributions[0] > player_contributions[1]:
+                players[0].chips += side_pot
+            else:
+                players[1].chips += side_pot
+        elif player_best < opponent_best:
+            winner = "Opponent"
+            players[1].chips += main_pot
+            # If opponent contributed more, they also get side pot
+            if player_contributions[1] > player_contributions[0]:
+                players[1].chips += side_pot
+            else:
+                players[0].chips += side_pot
+        else:  # Tie
+            winner = "Tie"
+            split = main_pot // 2
+            players[0].chips += split
+            players[1].chips += main_pot - split
+            
+            if player_contributions[0] > player_contributions[1]:
+                players[0].chips += side_pot
+            else:
+                players[1].chips += side_pot
+        
+        message = f"Winner: {winner} ({player_name} vs {opponent_name})"
+        return
         
     message = f"Winner: {winner} ({player_name} vs {opponent_name})"
 
@@ -437,7 +471,8 @@ def draw():
     pygame.display.flip()
 
 def opponent_action():
-    global waiting_for_action, pot, message, winner, round_stage
+    global waiting_for_action, pot, message, winner, round_stage, player_contributions
+    
     opp = players[1]
     player = players[0]
     to_call = player.current_bet - opp.current_bet
@@ -512,6 +547,7 @@ def opponent_action():
         opp.chips -= call_amt
         opp.current_bet += call_amt
         pot += call_amt
+        player_contributions[1] += call_amt
         opp.acted = True
         
         if opp.all_in:
@@ -526,7 +562,12 @@ def opponent_action():
         half_pot = max(10, int(pot * 0.5))
         three_quarter_pot = max(10, int(pot * 0.75))
         pot_bet = max(10, pot)
-        
+
+        quarter_pot = max(min_bet, quarter_pot)
+        half_pot = max(min_bet, half_pot)
+        three_quarter_pot = max(min_bet, three_quarter_pot)
+        pot_bet = max(min_bet, pot_bet)
+
         # Check if AI can't afford the minimum raise/bet
         if to_call > 0 and opp.chips <= to_call:
             # AI can't even call, so go all-in
@@ -535,6 +576,7 @@ def opponent_action():
             opp.chips = 0
             pot += call_amt
             opp.current_bet += call_amt
+            player_contributions[1] += call_amt
             opp.acted = True
             message = f"AI opponent calls all-in with {call_amt}"
         elif to_call == 0 and opp.chips < 10:
@@ -565,6 +607,7 @@ def opponent_action():
                     opp.chips = 0
                     pot += call_amt
                     opp.current_bet += call_amt
+                    player_contributions[1] += call_amt
                     message = f"AI opponent calls all-in with {call_amt}"
                 elif opp.chips < min_raise:
                     # Enough to call but not raise, just call
@@ -572,6 +615,7 @@ def opponent_action():
                     opp.chips -= call_amt
                     pot += call_amt
                     opp.current_bet += call_amt
+                    player_contributions[1] += call_amt
                     message = f"AI opponent calls {call_amt}"
                 elif bet_amount < player.current_bet:
                     # Bet is smaller than min raise
@@ -579,6 +623,7 @@ def opponent_action():
                     opp.chips -= call_amt
                     pot += call_amt
                     opp.current_bet += call_amt
+                    player_contributions[1] += call_amt
                     message = f"AI opponent calls {call_amt}"
                 else:
                     if bet_amount >= opp.chips + opp.current_bet:
@@ -586,6 +631,7 @@ def opponent_action():
                         additional_chips = opp.chips
                         opp.current_bet += additional_chips
                         pot += additional_chips
+                        player_contributions[1] += additional_chips
                         opp.chips = 0
                         opp.all_in = True
                         message = f"AI opponent raises all-in to {opp.current_bet}"
@@ -594,6 +640,7 @@ def opponent_action():
                         additional_chips = bet_amount - opp.current_bet
                         opp.chips -= additional_chips
                         pot += additional_chips
+                        player_contributions[1] += additional_chips
                         opp.current_bet = bet_amount
                         message = f"AI opponent raises to {bet_amount}"
             else:  # Betting
@@ -611,7 +658,8 @@ def opponent_action():
                 opp.chips -= bet_amount
                 pot += bet_amount
                 opp.current_bet = bet_amount
-            
+                player_contributions[1] += bet_amount
+
         opp.acted = True
         
         # Mark player as not acted since they need to respond to a raise/bet
@@ -631,7 +679,8 @@ def get_action_order():
 def game_loop():
     global slider_dragging, bet_slider_value, winner, round_stage
     
-    if any(p.all_in for p in players if p.active):
+    all_in_players = [p for p in players if p.all_in and p.active]
+    if len(all_in_players) > 0:
         if all(p.acted or p.all_in for p in players if p.active):
             while round_stage not in ["showdown"]:
                 advance_round()
@@ -698,22 +747,17 @@ def check_round_over():
     if len(active_players) <= 1:
         return True
     
-    all_decided = all(p.acted or p.all_in for p in active_players)
+    for p in active_players:
+        if not p.acted and not p.all_in:
+            return False
     
-    if any(p.all_in for p in active_players) and all_decided:
-        return True
-    
-    all_acted = all(p.acted for p in active_players)
-    
-    bets_equal_or_all_in = True
+
     max_bet = max(p.current_bet for p in active_players)
-    
     for p in active_players:
         if p.current_bet < max_bet and not p.all_in:
-            bets_equal_or_all_in = False
-            break
+            return False
     
-    return all_acted and bets_equal_or_all_in
+    return True
 
 def handle_player_action():
     global slider_dragging, bet_slider_value, waiting_for_action
@@ -747,17 +791,18 @@ def handle_player_action():
                     mx = max(SLIDER_X, min(mx, SLIDER_X + SLIDER_W))
                     rel = (mx - SLIDER_X) / SLIDER_W
                     bet_slider_value = int(bet_slider_min + rel * (bet_slider_max - bet_slider_min))
-        pygame.time.wait(10)
+        pygame.time.wait(5)
 
 def handle_bet_slider_mouse_down(mx, my):
     global slider_dragging, bet_slider_value, waiting_for_action
-    # Check if clicking the slider handle
-    pos = SLIDER_X if bet_slider_max == bet_slider_min else int(SLIDER_X + (bet_slider_value - bet_slider_min) / (bet_slider_max - bet_slider_min) * SLIDER_W)
-    if abs(mx - pos) <= 18 and abs(my - (SLIDER_Y + SLIDER_H//2)) <= 18:
+    if SLIDER_X <= mx <= SLIDER_X + SLIDER_W and SLIDER_Y - 10 <= my <= SLIDER_Y + SLIDER_H + 10:
+        rel = (mx - SLIDER_X) / SLIDER_W
+        bet_slider_value = int(bet_slider_min + rel * (bet_slider_max - bet_slider_min))
         slider_dragging = True
-    else:
-        if handle_bet_slider_event(mx, my):
-            waiting_for_action = False
+        return
+    
+    if handle_bet_slider_event(mx, my):
+        waiting_for_action = False
 
 
 if __name__ == "__main__":
@@ -778,6 +823,6 @@ if __name__ == "__main__":
         else:
             draw()
         
-        pygame.time.wait(10)
+        pygame.time.wait(5)
     
     pygame.quit()
