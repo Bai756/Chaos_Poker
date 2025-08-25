@@ -1,8 +1,9 @@
 import pygame
 import sys
 import pickle
-from base import evaluate_hand, Deck, hand_name_from_rank, Player
-from crf import mc_win_prob, new_deck as crf_new_deck, board_texture, draws_flags
+from base import evaluate_hand, Deck, hand_name_from_rank, Player, Card
+from crf import mc_win_prob, new_deck as crf_new_deck, board_texture, draws_flags, event_to_features
+import random
 
 
 BTN_X = 750
@@ -50,14 +51,14 @@ GOLD = (255, 215, 0)
 
 WIDTH, HEIGHT = 900, 600
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
-pygame.display.set_caption("7 Card Hold'em")
+pygame.display.set_caption("Chaos Poker")
 
 players = []
 community_cards = []
 deck = None
 pot = 0
 round_stage = "preflop"
-message = "Welcome to Hold'em!"
+message = "Welcome to Chaos Poker!"
 winner = None
 show_bet_slider = False
 bet_slider_value = 0
@@ -69,8 +70,10 @@ dealer_position = 0
 waiting_for_action = False
 player_contributions = [0, 0]
 
+game_event = ""
+
 try:
-    with open("crfv3.pkl", "rb") as f:
+    with open("crf_events_v1.pkl", "rb") as f:
         crf_model = pickle.load(f)
     print("CRF AI model loaded successfully")
 except Exception as e:
@@ -138,14 +141,23 @@ def draw_card(surface, card, x, y, highlight=False):
     border_color = GOLD if highlight else WHITE
     pygame.draw.rect(surface, border_color, (x, y, CARD_W, CARD_H), border_radius=8)
     pygame.draw.rect(surface, (240, 240, 240), (x+3, y+3, CARD_W-6, CARD_H-6), border_radius=6)
+
+    dx = 10
     if not card:
         card_str = ""
         color = GRAY
+    elif card.rank == "JOKER":
+        pygame.draw.rect(surface, (250, 245, 200), (x+6, y+6, CARD_W-12, CARD_H-12), border_radius=6)
+        card_str = "JK"
+        color = GOLD
     else:
         card_str = f"{card.rank}{card.suit}"
+        if card.rank == "10":
+            dx = 5
         color = BLACK if card.suit in ['♠', '♣'] else RED
+
     text = CARD_FONT.render(card_str, True, color)
-    surface.blit(text, (x + 10, y + 30))
+    surface.blit(text, (x + dx, y + 30))
 
 def draw_bet_slider():
     pygame.draw.rect(screen, (40, 40, 40), (250, 350, 400, 140), border_radius=12)
@@ -201,6 +213,42 @@ def handle_bet_slider_event(mx, my):
 def new_deck():
     global deck
     deck = Deck()
+    choose_random_event()
+
+def choose_random_event():
+    global deck, game_event
+    events = ["Cards are only 1 suit", "Cards are only 2 suits", 
+              "No face cards", "Only face cards", "War", "Normal", 
+              "Rankings are reversed", "Banned Rank", "Joker Wilds"]
+    game_event = random.choice(events)
+
+    if "suit" in game_event:
+        suits = ['♠', '♥', '♦', '♣']
+        suit = random.choice(suits)
+        if "1" in game_event:
+            deck.cards = [c for c in deck.cards if c.suit == suit]
+            game_event = "Cards are only " + suit
+        else:
+            suit2 = random.choice([s for s in suits if s != suit])
+            deck.cards = [c for c in deck.cards if c.suit == suit or c.suit == suit2]
+            game_event = "Cards are only " + suit + " and " + suit2
+    elif "face" in game_event:
+        if "No" in game_event:
+            deck.cards = [c for c in deck.cards if c.rank not in ['J', 'Q', 'K', 'A']]
+        else:
+            deck.cards = [c for c in deck.cards if c.rank in ['J', 'Q', 'K', 'A']]
+    elif "Banned" in game_event:
+        banned = random.choice(['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'])
+        deck.cards = [c for c in deck.cards if c.rank != banned]
+        game_event = "No " + banned + "s"
+    elif "Joker Wilds" in game_event:
+        deck.cards.append(Card('JOKER', 'Red'))
+        deck.cards.append(Card('JOKER', 'Black'))
+        deck.cards.append(Card('JOKER', 'Red'))
+        deck.cards.append(Card('JOKER', 'Black'))
+        deck.cards.append(Card('JOKER', 'Red'))
+        deck.cards.append(Card('JOKER', 'Black'))
+        deck.shuffle()
 
 def start_new_game():
     global players, community_cards, pot, round_stage, message, winner, dealer_position, player_contributions
@@ -354,7 +402,7 @@ def determine_winner():
     opponent_best = evaluate_hand(players[1].hand + community_cards)
     player_name = hand_name_from_rank(player_best[0])
     opponent_name = hand_name_from_rank(opponent_best[0])
-    
+
     if not players[0].active:
         winner = "Opponent"
         players[1].chips += pot
@@ -365,7 +413,32 @@ def determine_winner():
         players[0].chips += pot
         message = f"Winner: {winner} (Opponent folded)"
         return
-    
+
+    if game_event == "War":
+        p0_vals = sorted((RANK_TO_VALUE[c.rank] for c in (players[0].hand + community_cards)), reverse=True)
+        p1_vals = sorted((RANK_TO_VALUE[c.rank] for c in (players[1].hand + community_cards)), reverse=True)
+
+        for v0, v1 in zip(p0_vals, p1_vals):
+            if v0 > v1:
+                winner = "Player"
+                players[0].chips += pot
+                message = f"Winner (War): {winner} (high card {v0} vs {v1})"
+                return
+            if v1 > v0:
+                winner = "Opponent"
+                players[1].chips += pot
+                message = f"Winner (War): {winner} (high card {v1} vs {v0})"
+                return
+
+        winner = "Tie"
+        split = pot // 2
+        players[0].chips += split
+        players[1].chips += pot - split
+        message = f"Winner: {winner} (War tie)"
+        return
+    elif game_event == "Rankings are reversed":
+        player_best, opponent_best = opponent_best, player_best
+
     # Handle side pots when someone is all-in
     if players[0].all_in or players[1].all_in:
         min_contrib = min(player_contributions[0], player_contributions[1])
@@ -427,6 +500,34 @@ def draw():
 
     pot_text = BIG_FONT.render(f"Pot: {pot}", True, GOLD)
     screen.blit(pot_text, (50, 110))
+
+    ev_x, ev_y = 40, 200
+    ev_w, ev_h = 200, 100
+    pygame.draw.rect(screen, (30, 30, 30), (ev_x, ev_y, ev_w, ev_h), border_radius=10)
+    pygame.draw.rect(screen, GOLD, (ev_x, ev_y, ev_w, ev_h), 2, border_radius=10)
+    title_txt = FONT.render("Event", True, GOLD)
+    screen.blit(title_txt, (ev_x + 12, ev_y + 8))
+
+    def wrap_text(text, font, max_width):
+        words = text.split()
+        lines = []
+        cur = ""
+        for w in words:
+            test = cur + (" " if cur else "") + w
+            if font.size(test)[0] <= max_width - 20:
+                cur = test
+            else:
+                if cur:
+                    lines.append(cur)
+                cur = w
+        if cur:
+            lines.append(cur)
+        return lines
+
+    ev_lines = wrap_text(game_event, FONT, ev_w)
+    for i, line in enumerate(ev_lines[:6]):
+        line_surf = FONT.render(line, True, WHITE)
+        screen.blit(line_surf, (ev_x + 12, ev_y + 36 + i * 22))
 
     draw_hand(community_cards, 260, 180)
     draw_info_box(INFOBOX_PLAYER_X, INFOBOX_PLAYER_Y, players[0])
@@ -528,6 +629,7 @@ def opponent_action():
         "winp_x1000": int(win_prob_int * aggression_dampener),
         **texture_feats,
         **draw_feats,
+        **event_to_features(game_event),
     }
     
     print(f"Win probability: {win_prob:.2f}")

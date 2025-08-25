@@ -117,8 +117,49 @@ def discretize_bet_sizes(pot, stack, to_call):
 def pot_odds(to_call, pot):
     return to_call / max(1, (pot + to_call))
 
+def event_to_features(event):
+    ev = (event or "Normal").lower()
+
+    feats = {
+        "ev_normal": int(ev == "normal"),
+        "ev_war": int("war" in ev),
+        "ev_joker_wild": int("joker" in ev),
+        "ev_only_face": int("only face" in ev),
+        "ev_no_face": int("no face" in ev),
+        "ev_one_suit": int("only" in ev and "and" not in ev and "suit" in ev),
+        "ev_two_suits": int("only" in ev and "and" in ev and "suit" in ev),
+        "ev_rankings_reversed": int("ranking" in ev and "revers" in ev),
+    }
+
+    # Banned ranks
+    banned_present = False
+    banned_rank = None
+    for r in RANKS:
+        token = f"no {r.lower()}s"
+        if token in ev:
+            banned_present = True
+            banned_rank = r
+            break
+    feats["ev_banned_rank_present"] = int(banned_present)
+    for r in RANKS:
+        feats[f"ev_banned_rank_{r}"] = int(banned_rank == r)
+
+    # Suits
+    suits_map = {"♠": "spades", "♥": "hearts", "♦": "diamonds", "♣": "clubs"}
+    # Detect "only X suit" or "only X and Y"
+    allowed_suits = []
+    for name in suits_map.keys():
+        if f"only {name}" in ev or name in ev and "only" in ev:
+            allowed_suits.append(name)
+
+    for nm in suits_map.values():
+        feats[f"ev_allowed_suit_{nm}"] = int(nm in [suits_map[s] for s in allowed_suits])
+
+    feats["ev_label_"+ev.replace(" ", "_")] = 1
+    return feats
+
 def features_for_state(round_idx, hero_hand, board, pot, hero_stack, opp_stack,
-                       to_call, in_position, opp_count=1, mc_samples=120):
+                       to_call, in_position, opp_count=1, mc_samples=120, event=None):
     """Build a feature dict for CRF."""
     deck_cards = new_deck()
     # Remove cards that are already in play
@@ -137,6 +178,7 @@ def features_for_state(round_idx, hero_hand, board, pot, hero_stack, opp_stack,
         "winp_x1000": int(winp * 1000),
         **board_texture(board),
         **draws_flags(hero_hand, board),
+        **event_to_features(event),
     }
     return feats
 
@@ -240,14 +282,19 @@ def play_synthetic_hand(mc_samples=80):
     seq_feats = []
     seq_labels = []
 
+    # choose a random event for this synthetic hand
+    possible_events = ["Normal", "War", "Joker Wilds", "No face cards", "Only face cards",
+                       "Cards are only suit", "Cards are only suit and suit", "Rankings are reversed", "Banned Rank"]
+    hand_event = random.choice(possible_events)
+
     def one_round(round_idx, first_is_hero):
-        nonlocal pot, hero_stack, opp_stack, to_call_hero, to_call_opp, board
+        nonlocal pot, hero_stack, opp_stack, to_call_hero, to_call_opp, board, hand_event
 
         # FIRST player decision
         if first_is_hero:
             faced_bet = to_call_hero > 0
             feats = features_for_state(round_idx, hero, board, pot, hero_stack, opp_stack,
-                                       to_call_hero, in_position=0, opp_count=1, mc_samples=mc_samples)
+                                       to_call_hero, in_position=0, opp_count=1, mc_samples=mc_samples, event=hand_event)
             label = sample_action_from_policy(feats, faced_bet)
             seq_feats.append(feats); seq_labels.append(label)
             pot, hero_stack, opp_stack, to_call_hero, to_call_opp, ended = apply_action(
@@ -258,7 +305,7 @@ def play_synthetic_hand(mc_samples=80):
             # Opp first: generate their features, then their label
             faced_bet = to_call_opp > 0
             feats_opp = features_for_state(round_idx, opp, board, pot, opp_stack, hero_stack,
-                                           to_call_opp, in_position=0, opp_count=1, mc_samples=mc_samples//2)
+                                           to_call_opp, in_position=0, opp_count=1, mc_samples=mc_samples//2, event=hand_event)
             opp_label = sample_action_from_policy(feats_opp, faced_bet)
             pot, opp_stack, hero_stack, to_call_opp, to_call_hero, ended = apply_action(
                 opp_label, pot, opp_stack, hero_stack, to_call_opp, to_call_hero)
@@ -393,9 +440,9 @@ def train_crf(X, y):
     return crf
 
 def main():
-    num_hands = 15000
-    model = "crfv3.pkl"
-    X, y = simulate_sequences(num_hands, mc_samples=50)
+    num_hands = 30000
+    model = "crf_events_v1.pkl"
+    X, y = simulate_sequences(num_hands, mc_samples=75)
     print(f"Generated {len(X)} sequences with average length ~{sum(len(s) for s in X)/max(1,len(X)):.2f}")
 
     crf = train_crf(X, y)

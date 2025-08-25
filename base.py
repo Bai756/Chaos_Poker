@@ -1,5 +1,6 @@
 import random
 from collections import Counter
+from itertools import combinations as itertools_combinations
 
 SUITS = ['♠', '♥', '♦', '♣']
 RANKS = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A']
@@ -42,6 +43,8 @@ class Deck:
     def deal(self, n):
         dealt, self.cards = self.cards[:n], self.cards[n:]
         return dealt
+    def shuffle(self):
+        random.shuffle(self.cards)
 
 class Player:
     def __init__(self, name, chips=500):
@@ -188,130 +191,157 @@ def betting_round(players, min_bet, starting_bet=0, start_idx=0):
     return pot
 
 def evaluate_hand(cards):
-    rank_map = {r: i for i, r in enumerate(RANKS, 2)}
-    values = sorted([rank_map[c.rank] for c in cards], reverse=True)
-    suits = [c.suit for c in cards]
-    counts = Counter(values)
-    suit_counts = Counter(suits)
 
-    flush_suit = None
-    for suit, count in suit_counts.items():
-        if count >= 5:
-            flush_suit = suit
-            break
-    flush_cards = sorted([rank_map[c.rank] for c in cards if c.suit == flush_suit], reverse=True) if flush_suit else []
+    def is_joker(c):
+        return isinstance(c.rank, str) and c.rank.lower() in ("joker", "jk")
 
-    def get_straight(vals, length=5):
-        vals = sorted(set(vals), reverse=True)
-        for i in range(len(vals) - length + 1):
-            window = vals[i:i+length]
-            if window[0] - window[-1] == length - 1:
-                return window[0]
+    # Separate jokers from concrete cards
+    non_jokers = [c for c in cards if not is_joker(c)]
+    jokers = [c for c in cards if is_joker(c)]
+    num_jokers = len(jokers)
 
-        # Check for wheel straights (Ace as low)
-        if length == 5 and set([14, 5, 4, 3, 2]).issubset(vals):
-            return 5
-        elif length == 6 and set([14, 6, 5, 4, 3, 2]).issubset(vals):
-            return 6
-        elif length == 7 and set([14, 7, 6, 5, 4, 3, 2]).issubset(vals):
-            return 7
+    def eval_no_joker(card_list):
+        rank_map = {r: i for i, r in enumerate(RANKS, 2)}
+        values = sorted([rank_map[c.rank] for c in card_list], reverse=True)
+        suits = [c.suit for c in card_list]
+        counts = Counter(values)
+        suit_counts = Counter(suits)
 
-        return None
+        flush_suit = None
+        for suit, count in suit_counts.items():
+            if count >= 5:
+                flush_suit = suit
+                break
+        flush_cards = sorted([rank_map[c.rank] for c in card_list if c.suit == flush_suit], reverse=True) if flush_suit else []
 
-    quads = [v for v, c in counts.items() if c == 4]
-    trips = [v for v, c in counts.items() if c == 3]
-    pairs = [v for v, c in counts.items() if c == 2]
-    singles = [v for v, c in counts.items() if c == 1]
+        def get_straight(vals, length=5):
+            vals = sorted(set(vals), reverse=True)
+            for i in range(len(vals) - length + 1):
+                window = vals[i:i+length]
+                if window[0] - window[-1] == length - 1:
+                    return window[0]
 
-    # 1. 7-card straight-flush (exact)
-    if flush_suit and len(flush_cards) == 7:
-        sf = get_straight(flush_cards, 7)
-        if sf:
-            return (HAND_RANK["7-card straight-flush"], sf)
+            # Check for wheel straights (Ace as low)
+            if length == 5 and set([14, 5, 4, 3, 2]).issubset(vals):
+                return 5
+            elif length == 6 and set([14, 6, 5, 4, 3, 2]).issubset(vals):
+                return 6
+            elif length == 7 and set([14, 7, 6, 5, 4, 3, 2]).issubset(vals):
+                return 7
 
-    # 2. Quad set (4 + 3)
-    if quads and trips:
-        return (HAND_RANK["Quad set (4 + 3)"], max(quads), max(trips))
+            return None
 
-    # 3. 6-card straight-flush (exact)
-    if flush_suit and len(flush_cards) >= 6:
-        sf = get_straight(flush_cards, 6)
-        if sf and not get_straight(flush_cards, 7):
-            return (HAND_RANK["6-card straight-flush"], sf)
+        quads = [v for v, c in counts.items() if c == 4]
+        trips = [v for v, c in counts.items() if c == 3]
+        pairs = [v for v, c in counts.items() if c == 2]
+        singles = [v for v, c in counts.items() if c == 1]
 
-    # 4. 7-card flush
-    if flush_suit and len(flush_cards) == 7:
-        return (HAND_RANK["7-card flush"], *flush_cards)
+        # 1. 7-card straight-flush (exact)
+        if flush_suit and len(flush_cards) == 7:
+            sf = get_straight(flush_cards, 7)
+            if sf:
+                return (HAND_RANK["7-card straight-flush"], sf)
 
-    # 5. 5-card straight-flush (exact)
-    if flush_suit and len(flush_cards) >= 5:
-        sf = get_straight(flush_cards, 5)
-        if sf and not get_straight(flush_cards, 6) and not get_straight(flush_cards, 7):
-            return (HAND_RANK["5-card straight-flush"], sf)
+        # 2. Quad set (4 + 3)
+        if quads and trips:
+            return (HAND_RANK["Quad set (4 + 3)"], max(quads), max(trips))
 
-    # 6. Quad House (4 + 2 + 1)
-    if quads and pairs and singles:
-        return (HAND_RANK["Quad House (4 + 2 + 1)"], max(quads), max(pairs), max(singles))
+        # 3. 6-card straight-flush (exact)
+        if flush_suit and len(flush_cards) >= 6:
+            sf = get_straight(flush_cards, 6)
+            if sf and not get_straight(flush_cards, 7):
+                return (HAND_RANK["6-card straight-flush"], sf)
 
-    # 7. Super set (3 + 3 + 1)
-    if len(trips) >= 2 and singles:
-        t1, t2 = sorted(trips, reverse=True)[:2]
-        return (HAND_RANK["Super set (3 + 3 + 1)"], t1, t2, max(singles))
+        # 4. 7-card flush
+        if flush_suit and len(flush_cards) == 7:
+            return (HAND_RANK["7-card flush"], *flush_cards)
 
-    # 8. 7-card straight
-    if len(set(values)) == 7:
-        s7 = get_straight(values, 7)
-        if s7:
-            return (HAND_RANK["7-card straight"], s7)
+        # 5. 5-card straight-flush (exact)
+        if flush_suit and len(flush_cards) >= 5:
+            sf = get_straight(flush_cards, 5)
+            if sf and not get_straight(flush_cards, 6) and not get_straight(flush_cards, 7):
+                return (HAND_RANK["5-card straight-flush"], sf)
 
-    # 9. Mega full house (3 + 2 + 2)
-    if trips and len(pairs) >= 2:
-        return (HAND_RANK["Mega full house (3 + 2 + 2)"], max(trips), *sorted(pairs, reverse=True)[:2])
+        # 6. Quad House (4 + 2 + 1)
+        if quads and pairs and singles:
+            return (HAND_RANK["Quad House (4 + 2 + 1)"], max(quads), max(pairs), max(singles))
 
-    # 10. Quads
-    if quads and len(singles) >= 3:
-        return (HAND_RANK["Quads"], max(quads), *sorted(singles, reverse=True)[:3])
+        # 7. Super set (3 + 3 + 1)
+        if len(trips) >= 2 and singles:
+            t1, t2 = sorted(trips, reverse=True)[:2]
+            return (HAND_RANK["Super set (3 + 3 + 1)"], t1, t2, max(singles))
 
-    # 11. 6-card flush
-    if flush_suit and len(flush_cards) == 6:
-        return (HAND_RANK["6-card flush"], *flush_cards)
+        # 8. 7-card straight
+        if len(set(values)) == 7:
+            s7 = get_straight(values, 7)
+            if s7:
+                return (HAND_RANK["7-card straight"], s7)
 
-    # 12. 6-card straight
-    s6 = get_straight(values, 6)
-    if s6 and not get_straight(values, 7):
-        return (HAND_RANK["6-card straight"], s6)
+        # 9. Mega full house (3 + 2 + 2)
+        if trips and len(pairs) >= 2:
+            return (HAND_RANK["Mega full house (3 + 2 + 2)"], max(trips), *sorted(pairs, reverse=True)[:2])
 
-    # 13. 3 pair (2 + 2 + 2 + 1)
-    if len(pairs) >= 3 and singles:
-        return (HAND_RANK["3 pair (2 + 2 + 2 + 1)"], *sorted(pairs, reverse=True)[:3], max(singles))
+        # 10. Quads
+        if quads and len(singles) >= 3:
+            return (HAND_RANK["Quads"], max(quads), *sorted(singles, reverse=True)[:3])
 
-    # 14. Full House
-    if trips and pairs and len(singles) >= 2:
-        return (HAND_RANK["Full House"], max(trips), max(pairs), *sorted(singles, reverse=True)[:2])
+        # 11. 6-card flush
+        if flush_suit and len(flush_cards) == 6:
+            return (HAND_RANK["6-card flush"], *flush_cards)
 
-    # 15. 5-card flush
-    if flush_suit and len(flush_cards) == 5:
-        return (HAND_RANK["5-card flush"], *flush_cards)
+        # 12. 6-card straight
+        s6 = get_straight(values, 6)
+        if s6 and not get_straight(values, 7):
+            return (HAND_RANK["6-card straight"], s6)
 
-    # 16. Trips
-    if trips and len(singles) >= 4:
-        return (HAND_RANK["Trips"], max(trips), *sorted(singles, reverse=True)[:4])
+        # 13. 3 pair (2 + 2 + 2 + 1)
+        if len(pairs) >= 3 and singles:
+            return (HAND_RANK["3 pair (2 + 2 + 2 + 1)"], *sorted(pairs, reverse=True)[:3], max(singles))
 
-    # 17. 5-card straight
-    s5 = get_straight(values, 5)
-    if s5 and not get_straight(values, 6) and not get_straight(values, 7):
-        return (HAND_RANK["5-card straight"], s5)
+        # 14. Full House
+        if trips and pairs and len(singles) >= 2:
+            return (HAND_RANK["Full House"], max(trips), max(pairs), *sorted(singles, reverse=True)[:2])
 
-    # 18. 2 pair
-    if len(pairs) >= 2 and len(singles) >= 3:
-        return (HAND_RANK["2 pair"], *sorted(pairs, reverse=True)[:2], *sorted(singles, reverse=True)[:3])
+        # 15. 5-card flush
+        if flush_suit and len(flush_cards) == 5:
+            return (HAND_RANK["5-card flush"], *flush_cards)
 
-    # 19. 1 pair
-    if pairs and len(singles) >= 5:
-        return (HAND_RANK["1 pair"], max(pairs), *sorted(singles, reverse=True)[:5])
+        # 16. Trips
+        if trips and len(singles) >= 4:
+            return (HAND_RANK["Trips"], max(trips), *sorted(singles, reverse=True)[:4])
 
-    # 20. High card
-    return (HAND_RANK["High card"], *values[:7])
+        # 17. 5-card straight
+        s5 = get_straight(values, 5)
+        if s5 and not get_straight(values, 6) and not get_straight(values, 7):
+            return (HAND_RANK["5-card straight"], s5)
+
+        # 18. 2 pair
+        if len(pairs) >= 2 and len(singles) >= 3:
+            return (HAND_RANK["2 pair"], *sorted(pairs, reverse=True)[:2], *sorted(singles, reverse=True)[:3])
+
+        # 19. 1 pair
+        if pairs and len(singles) >= 5:
+            return (HAND_RANK["1 pair"], max(pairs), *sorted(singles, reverse=True)[:5])
+
+        # 20. High card
+        return (HAND_RANK["High card"], *values[:7])
+
+    if num_jokers == 0:
+        return eval_no_joker(cards)
+
+    present = {(c.rank, c.suit) for c in non_jokers}
+    all_possible = [Card(r, s) for s in SUITS for r in RANKS if (r, s) not in present]
+
+    best_score = None
+
+    # Iterate all combinations of distinct replacement cards for jokers
+    for combo in itertools_combinations(all_possible, num_jokers):
+        trial_cards = non_jokers + list(combo)
+        score = eval_no_joker(trial_cards)
+        if best_score is None or score > best_score:
+            best_score = score
+
+    return best_score
 
 def hand_name_from_rank(rank):
     return HAND_ORDER[::-1][rank]
