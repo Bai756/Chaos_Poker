@@ -1,6 +1,22 @@
-# 7-Card Hold'em
+# Chaos Poker
 
 Heads up Texas Hold'em poker, but using all ***7*** cards instead of 5.
+Each round there is a ***game event***.
+
+## Game Events
+
+Chaos Poker includes randomized "events" that change the game.
+Possible events:
+
+- Joker Wilds — adds multiple Joker cards that act as wilds.
+- Cards are only 1 suit — deck restricted to a single suit.
+- Cards are only 2 suits — deck restricted to two suits.
+- No face cards — removes J, Q, K, A from the deck.
+- Only face cards — keeps only J, Q, K, A in the deck.
+- War — compares high-card values differently (high-card showdown).
+- Normal — no special event; standard rules.
+- Rankings are reversed — hand rankings are inverted.
+- Banned Rank — a random rank (e.g., 2..A) is removed from the deck.
 
 ## AI
 
