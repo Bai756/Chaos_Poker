@@ -8,20 +8,20 @@ Each round there is a ***game event***.
 Chaos Poker includes randomized "events" that change the game.
 Possible events:
 
-- Joker Wilds — adds multiple Joker cards that act as wilds.
+- Joker Wilds — adds 6 Joker cards that act as wilds.
 - Cards are only 1 suit — deck restricted to a single suit.
 - Cards are only 2 suits — deck restricted to two suits.
 - No face cards — removes J, Q, K, A from the deck.
 - Only face cards — keeps only J, Q, K, A in the deck.
-- War — compares high-card values differently (high-card showdown).
-- Normal — no special event; standard rules.
+- War — the players play war against each other.
 - Rankings are reversed — hand rankings are inverted.
 - Banned Rank — a random rank (e.g., 2..A) is removed from the deck.
+- Normal — no special event; standard rules.
 
 ## AI
 
 - Opponent driven by a CRF model
-- AI action set: FOLD, CHECK, CALL, BET_MIN, BET_QUARTER, BET_HALF, BET_THREE_QUARTERS, BET_POT, ALLIN
+- AI action set: fold, check, call, bet_min, bet_quarter, bet_half, bet_three_quarters, bet_pot, allin
 
 ## Install
 
