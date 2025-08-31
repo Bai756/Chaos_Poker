@@ -1,6 +1,6 @@
 import random
 from collections import Counter
-from itertools import combinations as itertools_combinations
+from itertools import combinations
 
 SUITS = ['♠', '♥', '♦', '♣']
 RANKS = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A']
@@ -335,7 +335,7 @@ def evaluate_hand(cards):
     best_score = None
 
     # Iterate all combinations of distinct replacement cards for jokers
-    for combo in itertools_combinations(all_possible, num_jokers):
+    for combo in combinations(all_possible, num_jokers):
         trial_cards = non_jokers + list(combo)
         score = eval_no_joker(trial_cards)
         if best_score is None or score > best_score:

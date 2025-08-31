@@ -1,8 +1,10 @@
+import os
 import random
 import pickle
 from collections import Counter
 from itertools import combinations
 from base import evaluate_hand, Card, SUITS, RANKS
+from sklearn_crfsuite import CRF
 
 
 RANK_TO_VAL = {r: i for i, r in enumerate(RANKS, start=2)}
@@ -427,7 +429,6 @@ def simulate_sequences(n_hands, mc_samples=60):
 
 def train_crf(X, y):
     """Train a CRF model on the provided data."""
-    from sklearn_crfsuite import CRF
     crf = CRF(
         algorithm='lbfgs',
         c1=0.1,
@@ -442,8 +443,18 @@ def train_crf(X, y):
 def main():
     num_hands = 30000
     model = "crf_events_v1.pkl"
-    X, y = simulate_sequences(num_hands, mc_samples=75)
-    print(f"Generated {len(X)} sequences with average length ~{sum(len(s) for s in X)/max(1,len(X)):.2f}")
+    seq_file = "sequences_v1.pkl"
+
+    if os.path.exists(seq_file):
+        with open(seq_file, "rb") as f:
+            X, y = pickle.load(f)
+        print(f"Loaded {len(X)} sequences from {seq_file}")
+    else:
+        X, y = simulate_sequences(num_hands, mc_samples=75)
+        print(f"Generated {len(X)} sequences with average length ~{sum(len(s) for s in X)/max(1,len(X)):.2f}")
+        with open(seq_file, "wb") as f:
+            pickle.dump((X, y), f)
+        print(f"Saved generated sequences to {seq_file}")
 
     crf = train_crf(X, y)
     with open(model, "wb") as f:
