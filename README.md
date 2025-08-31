@@ -1,7 +1,8 @@
 # Chaos Poker
 
 Heads up Texas Hold'em poker, but using all ***7*** cards instead of 5.
-Each round there is a ***game event***.
+Each round there is a new ***game event***.
+Game link on itch: [Chaos Poker](https://bai756.itch.io/chaos-poker)
 
 ## Game Events
 
