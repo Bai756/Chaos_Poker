@@ -9,7 +9,7 @@ Game link on itch: [Chaos Poker](https://bai756.itch.io/chaos-poker)
 Chaos Poker includes randomized "events" that change the game.
 Possible events:
 
-- Joker Wilds — adds 6 Joker cards that act as wilds.
+- Joker Wilds — adds 6 Joker cards to the deck that act as wilds.
 - Cards are only 1 suit — deck restricted to a single suit.
 - Cards are only 2 suits — deck restricted to two suits.
 - No face cards — removes J, Q, K, A from the deck.
