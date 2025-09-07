@@ -321,6 +321,8 @@ def event_to_features(event):
         "ev_one_suit": int("only" in ev and "and" not in ev and "suit" in ev),
         "ev_two_suits": int("only" in ev and "and" in ev and "suit" in ev),
         "ev_rankings_reversed": int("ranking" in ev and "revers" in ev),
+        "ev_only_odds": int("only odds" in ev),
+        "ev_only_evens": int("only evens" in ev),
     }
 
     # Banned ranks
@@ -675,7 +677,7 @@ BTN_H = 40
 BTN_SPACING = 70
 BTN_Y_START = 180
 
-INFOBOX_W = 220
+INFOBOX_W = 250
 INFOBOX_H = 60
 INFOBOX_PLAYER_X = 40
 INFOBOX_PLAYER_Y = 470
@@ -736,7 +738,7 @@ player_contributions = [0, 0]
 game_event = ""
 
 try:
-    model_path = os.path.join("assets", "crf_custom_v1.pkl")
+    model_path = os.path.join("assets", "crf_custom_v2.pkl")
     crf_model = LinearChainCRF.load(model_path)
     print("CRF AI model loaded successfully")
 
@@ -883,7 +885,7 @@ def choose_random_event():
     global deck, game_event
     events = ["Cards are only 1 suit", "Cards are only 2 suits",
               "No face cards", "Only face cards", "War", "Normal",
-              "Rankings are reversed", "Banned Rank", "Joker Wilds"]
+              "Rankings are reversed", "Joker Wilds", "Only odds", "Only evens"]
     game_event = random.choice(events)
 
     if "suit" in game_event:
@@ -901,10 +903,10 @@ def choose_random_event():
             deck.cards = [c for c in deck.cards if c.rank not in ['J', 'Q', 'K', 'A']]
         else:
             deck.cards = [c for c in deck.cards if c.rank in ['J', 'Q', 'K', 'A']]
-    elif "Banned" in game_event:
-        banned = random.choice(['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'])
-        deck.cards = [c for c in deck.cards if c.rank != banned]
-        game_event = "No " + banned + "s"
+    elif "Only odds" in game_event:
+        deck.cards = [c for c in deck.cards if c.rank in ['A', '3', '5', '7', '9', 'J', 'K']]
+    elif "Only evens" in game_event:
+        deck.cards = [c for c in deck.cards if c.rank in ['2', '4', '6', '8', 'Q']]
     elif "Joker Wilds" in game_event:
         deck.cards.append(Card('JOKER', 'Red'))
         deck.cards.append(Card('JOKER', 'Black'))
@@ -1022,16 +1024,13 @@ def check_action():
     waiting_for_action = False
 
 def fold_action():
-    global message, winner, round_stage
+    global round_stage
     players[0].active = False
     players[0].acted = True
-    winner = "Opponent"
-    message = "You folded."
     round_stage = "showdown"
-    players[1].chips += pot
 
 def advance_round():
-    global round_stage, message, winner
+    global round_stage, winner
     if winner:
         return
 
@@ -1051,8 +1050,6 @@ def advance_round():
     elif round_stage == "river":
         round_stage = "showdown"
         determine_winner()
-    else:
-        start_new_game()
     update_buttons()
 
 def make_buttons():
@@ -1065,8 +1062,16 @@ def make_buttons():
 
 buttons = make_buttons()
 
+def append_bust_info(msg):
+    busted = [p.name for p in players if p.chips <= 0]
+    if not busted:
+        return msg
+    if len(busted) == 1:
+        return f"{msg}  {busted[0]} busted!"
+    return f"{msg}  {' and '.join(busted)} busted!"
+
 def determine_winner():
-    global winner, message, pot
+    global winner, message, pot, round_stage
     player_best = evaluate_hand(players[0].hand + community_cards)
     opponent_best = evaluate_hand(players[1].hand + community_cards)
     player_name = hand_name_from_rank(player_best[0])
@@ -1076,11 +1081,14 @@ def determine_winner():
         winner = "Opponent"
         players[1].chips += pot
         message = f"Winner: {winner} (Player folded)"
+        message = append_bust_info(message)
         return
     elif not players[1].active:
+        print("win amount:", pot)
         winner = "Player"
         players[0].chips += pot
         message = f"Winner: {winner} (Opponent folded)"
+        message = append_bust_info(message)
         return
 
     if game_event == "War":
@@ -1092,11 +1100,13 @@ def determine_winner():
                 winner = "Player"
                 players[0].chips += pot
                 message = f"Winner (War): {winner} (high card {v0} vs {v1})"
+                message = append_bust_info(message)
                 return
             if v1 > v0:
                 winner = "Opponent"
                 players[1].chips += pot
                 message = f"Winner (War): {winner} (high card {v1} vs {v0})"
+                message = append_bust_info(message)
                 return
 
         winner = "Tie"
@@ -1104,6 +1114,7 @@ def determine_winner():
         players[0].chips += split
         players[1].chips += pot - split
         message = f"Winner: {winner} (War tie)"
+        message = append_bust_info(message)
         return
     elif game_event == "Rankings are reversed":
         player_best, opponent_best = opponent_best, player_best
@@ -1143,6 +1154,7 @@ def determine_winner():
                 players[1].chips += side_pot
 
         message = f"Winner: {winner} ({player_name} vs {opponent_name})"
+        message = append_bust_info(message)
         return
 
     if player_best > opponent_best:
@@ -1158,6 +1170,7 @@ def determine_winner():
         players[1].chips += split
 
     message = f"Winner: {winner} ({player_name} vs {opponent_name})"
+    message = append_bust_info(message)
 
 def close_bet_slider():
     global show_bet_slider
@@ -1215,6 +1228,13 @@ def draw():
         msg_text = BIG_FONT.render(message, True, GOLD)
         screen.blit(msg_text, (WIDTH // 2 - msg_text.get_width() // 2, HEIGHT // 2 - msg_text.get_height() // 2))
         buttons[3].visible = True
+        player_busted = players[0].chips <= 0
+        if player_busted:
+            buttons[3].text = "Rebuy (500 chips)"
+            buttons[3].rect.width = 215
+        else:
+            buttons[3].text = "Next Hand"
+            buttons[3].rect.width = 150
     else:
         msg_text = FONT.render(message, True, WHITE)
         screen.blit(msg_text, (50, 140))
@@ -1271,7 +1291,7 @@ def opponent_action():
     # Extract features for the AI decision
     round_idx = {"preflop": 0, "flop": 1, "turn": 2, "river": 3}[round_stage]
 
-    deck_cards = [deck_card for deck_card in deck.cards]
+    deck_cards = [deck_card for deck_card in deck.cards] + [card for card in player.hand]
 
     # Calculate win probability using Monte Carlo simulation
     mc_trials = 100
@@ -1312,11 +1332,13 @@ def opponent_action():
     if action == "FOLD":
         opp.active = False
         opp.acted = True
-        message = "AI opponent folds"
-        winner = "Player"
         round_stage = "showdown"
 
     elif action == "CHECK" and to_call == 0:
+        message = "AI opponent checks"
+        opp.acted = True
+    
+    elif action == "CALL" and to_call == 0:
         message = "AI opponent checks"
         opp.acted = True
 
@@ -1399,7 +1421,7 @@ def opponent_action():
                     opp.current_bet += call_amt
                     player_contributions[1] += call_amt
                     message = f"AI opponent calls {call_amt}"
-                elif bet_amount < player.current_bet:
+                elif bet_amount <= player.current_bet:
                     # Bet is smaller than min raise
                     call_amt = to_call
                     opp.chips -= call_amt
@@ -1468,10 +1490,15 @@ async def game_loop_async():
                 advance_round()
                 draw()
                 await asyncio.sleep(0)
-            return
-
+            
     while not winner and round_stage != "showdown":
         action_order = get_action_order()
+
+        if not players[0].active or not players[1].active:
+            round_stage = "showdown"
+            determine_winner()
+            draw()
+            return
 
         # First player to act
         first_player = action_order[0]
@@ -1490,6 +1517,12 @@ async def game_loop_async():
                         draw()
                         await asyncio.sleep(0)
                     return
+
+        if not players[0].active or not players[1].active:
+            round_stage = "showdown"
+            determine_winner()
+            draw()
+            return
 
         if check_round_over():
             advance_round()
@@ -1526,6 +1559,7 @@ async def game_loop_async():
         if not players[0].active or not players[1].active:
             determine_winner()
             draw()
+            return
 
         # yield to event loop to keep UI responsive
         await asyncio.sleep(0)

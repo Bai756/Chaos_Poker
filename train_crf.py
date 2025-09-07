@@ -130,6 +130,8 @@ def event_to_features(event):
         "ev_one_suit": int("only" in ev and "and" not in ev and "suit" in ev),
         "ev_two_suits": int("only" in ev and "and" in ev and "suit" in ev),
         "ev_rankings_reversed": int("ranking" in ev and "revers" in ev),
+        "ev_only_odds": int("only odds" in ev),
+        "ev_only_evens": int("only evens" in ev),
     }
 
     # Banned ranks
@@ -438,8 +440,8 @@ def train_crf(X, y):
 
 def main():
     num_hands = 30000
-    model = "crf_custom_v1.pkl"
-    seq_file = "sequences_v1.pkl"
+    model = "crf_custom_v2.pkl"
+    seq_file = "sequences.pkl"
 
     if os.path.exists(seq_file):
         with open(seq_file, "rb") as f:

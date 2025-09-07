@@ -10,13 +10,14 @@ Chaos Poker includes randomized "events" that change the game.
 Possible events:
 
 - Joker Wilds — adds 6 Joker cards to the deck that act as wilds.
+- Only evens — only even-ranked cards are used (2, 4, 6, 8, 10, Q).
+- Only odds - only odd-ranked cards are used (A, 3, 5, 7, 9, J, K).
 - Cards are only 1 suit — deck restricted to a single suit.
 - Cards are only 2 suits — deck restricted to two suits.
 - No face cards — removes J, Q, K, A from the deck.
 - Only face cards — keeps only J, Q, K, A in the deck.
 - War — the players play war against each other.
 - Rankings are reversed — hand rankings are inverted.
-- Banned Rank — a random rank (e.g., 2..A) is removed from the deck.
 - Normal — no special event; standard rules.
 
 ## AI
